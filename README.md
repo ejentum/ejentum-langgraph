@@ -1,8 +1,8 @@
 # ejentum-langgraph
 
-[LangGraph.js](https://langchain-ai.github.io/langgraphjs/) and [LangChain.js](https://js.langchain.com) integration for the [Ejentum](https://ejentum.com) Reasoning Harness. `createEjentumTools()` returns an array of four agent-callable tools (`harness_reasoning`, `harness_code`, `harness_anti_deception`, `harness_memory`) you pass to `createReactAgent({ tools })` or `createAgent({ tools })`.
+[LangGraph.js](https://langchain-ai.github.io/langgraphjs/) and [LangChain.js](https://js.langchain.com) integration for the [Ejentum](https://ejentum.com) Reasoning Harness. `createEjentumTools()` returns an array of eight agent-callable tools you pass to `createReactAgent({ tools })` or `createAgent({ tools })`: four dynamic (`reasoning`, `code`, `anti-deception`, `memory`) plus four adaptive (`adaptive-reasoning`, `adaptive-code`, `adaptive-anti-deception`, `adaptive-memory`) that pre-fit the cognitive operation to the caller's task via an adapter LLM.
 
-Each operation in the Ejentum library (679 of them, organized across four harnesses) is engineered in **two layers**:
+Each operation in the Ejentum library (679 of them, organized across four cognitive harnesses each with dynamic and adaptive variants) is engineered in **two layers**:
 
 - a **natural-language procedure** the model can read, naming the steps to take and the failure pattern to refuse, and
 - an **executable reasoning topology**: a graph-shaped plan over those steps. The plan names explicit decision points where the model branches, parallel branches that run and rejoin, bounded loops that run until convergence, named meta-cognitive moments where the model is asked to stop, look at its own working, and re-enter at a specific step, plus escape paths for when the prescribed plan stops fitting the task at hand.
@@ -19,10 +19,10 @@ npm install @langchain/core zod
 
 ## Configuration
 
-Get an Ejentum API key at <https://ejentum.com/pricing> (free and paid tiers) and set it in your environment:
+Get an Ejentum API key at <https://ejentum.com/pricing>. The 30-day free trial (no card required) includes 1,000 dynamic reasoning calls; adaptive tools require Go or Super.
 
 ```bash
-export EJENTUM_API_KEY="zpka_..."
+export EJENTUM_API_KEY="ej_..."
 ```
 
 Or pass it explicitly: `createEjentumTools({ apiKey: "..." })`.
@@ -93,19 +93,30 @@ const tools = [
 ### Explicit API key
 
 ```ts
-const tools = createEjentumTools({ apiKey: "zpka_..." });
+const tools = createEjentumTools({ apiKey: "ej_..." });
 ```
 
-## The four tools
+## The eight tools
+
+### Dynamic (single retrieval, all tiers including the 30-day free trial)
 
 | Tool name (LLM-visible) | Best for | Library size |
 |---|---|---|
-| `harness_reasoning` | Analytical, diagnostic, planning, multi-step tasks | 311 operations |
-| `harness_code` | Code generation, refactoring, review, debugging | 128 operations |
-| `harness_anti_deception` | Prompts that pressure the agent to validate, certify, or soften an honest assessment | 139 operations |
-| `harness_memory` | Sharpening an observation about cross-turn drift. Filter-oriented, not write-oriented. Format `query` as `"I noticed X. This might mean Y. Sharpen: Z."` | 101 operations |
+| `reasoning` | Analytical, diagnostic, planning, multi-step tasks | 311 operations |
+| `code` | Code generation, refactoring, review, debugging | 128 operations |
+| `anti-deception` | Prompts that pressure the agent to validate, certify, or soften an honest assessment | 139 operations |
+| `memory` | Sharpening an observation about cross-turn drift. Filter-oriented, not write-oriented. Format `query` as `"I noticed X. This might mean Y. Sharpen: Z."` | 101 operations |
 
-Each tool returns a string. The bracketed labels in the returned scaffold (`[NEGATIVE GATE]`, `[PROCEDURE]`, `[REASONING TOPOLOGY]`, etc.) are instructions to the agent, not content to display.
+### Adaptive (top-k retrieval + adapter LLM rewrites operation to fit the task; Go or Super tier required)
+
+| Tool name | When to prefer over the dynamic version |
+|---|---|
+| `adaptive-reasoning` | High-stakes analytical work where every DAG node should be mapped to your specifics before generation. Cost ~2-3s vs ~1s. |
+| `adaptive-code` | Security-critical reviews, refactor-heavy diffs, or any code work where every verification step should be concretized. |
+| `adaptive-anti-deception` | When the stakes of a soft or sycophantic answer are high. |
+| `adaptive-memory` | When the dynamic memory tool's general scaffold is not sharp enough for the perception being formed. |
+
+Each tool returns a string. The bracketed labels in the returned injection (`[NEGATIVE GATE]`, `[PROCEDURE]`, `[REASONING TOPOLOGY]`, etc.) are instructions to the agent, not content to display.
 
 ## What an injection looks like
 
@@ -131,8 +142,7 @@ S6:validate -> continue -> all_checked -> OUT:anomaly_report
 If no event timing is flagged as suspiciously fast or slow relative to
 baseline, temporal anomaly detection was not active.
 
-Amplify: timing baseline comparison; anomaly classification; security
-context elevation
+Amplify: timing baseline comparison; anomaly classification
 Suppress: average timing acceptance; outlier normalization
 ```
 
@@ -146,11 +156,14 @@ createEjentumTools(config?: EjentumConfig): DynamicStructuredTool[]
 
 | Config field | Default | Description |
 |---|---|---|
-| `apiKey` | `process.env.EJENTUM_API_KEY` | Ejentum Logic API key. |
-| `apiUrl` | `https://ejentum-main-ab125c3.zuplo.app/logicv1/` | Override only if you self-host the gateway. |
+| `apiKey` | `process.env.EJENTUM_API_KEY` | Ejentum API key. |
+| `apiUrl` | `https://api.ejentum.com/harness/` | Override only if you self-host the gateway. |
 | `timeoutMs` | `10000` | Per-call HTTP timeout in milliseconds. |
 
-Per-tool factories: `createReasoningTool`, `createCodeTool`, `createAntiDeceptionTool`, `createMemoryTool`.
+Per-tool factories:
+
+- Dynamic: `createReasoningTool`, `createCodeTool`, `createAntiDeceptionTool`, `createMemoryTool`
+- Adaptive: `createAdaptiveReasoningTool`, `createAdaptiveCodeTool`, `createAdaptiveAntiDeceptionTool`, `createAdaptiveMemoryTool`
 
 ## ejentum-mcp alternative
 
