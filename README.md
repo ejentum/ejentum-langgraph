@@ -1,31 +1,26 @@
 # ejentum-langgraph
 
-[LangGraph.js](https://langchain-ai.github.io/langgraphjs/) and [LangChain.js](https://js.langchain.com) integration for the [Ejentum](https://ejentum.com) Reasoning Harness. `createEjentumTools()` returns an array of four agent-callable tools (`harness_reasoning`, `harness_code`, `harness_anti_deception`, `harness_memory`) you pass to `createReactAgent({ tools })` or `createAgent({ tools })`.
+[LangGraph.js](https://langchain-ai.github.io/langgraphjs/) and [LangChain.js](https://js.langchain.com) integration for the Ejentum Reasoning Harness. `createEjentumTools()` returns an array of eight `DynamicStructuredTool` instances you pass as the `tools` argument to `createReactAgent`, `createAgent`, `ToolNode`, or any LangChain graph node that accepts tools.
 
-Each operation in the Ejentum library (679 of them, organized across four harnesses) is engineered in **two layers**:
+Use the harness before the agent generates on complex, multi-step, or multi-constraint tasks where the model's default reasoning template would miss a constraint, take a shortcut, or drift across turns. Each call returns a *cognitive operation*: a structured procedure (numbered steps with a failure pattern to refuse and a falsification test) paired with an executable reasoning topology (a DAG of those steps with decision gates, parallel branches, bounded loops, and meta-cognitive exit nodes). The agent reads both layers before producing its response.
 
-- a **natural-language procedure** the model can read, naming the steps to take and the failure pattern to refuse, and
-- an **executable reasoning topology**: a graph-shaped plan over those steps. The plan names explicit decision points where the model branches, parallel branches that run and rejoin, bounded loops that run until convergence, named meta-cognitive moments where the model is asked to stop, look at its own working, and re-enter at a specific step, plus escape paths for when the prescribed plan stops fitting the task at hand.
+Four dynamic tools (`reasoning`, `code`, `anti-deception`, `memory`) are available on all tiers including the 30-day free trial. Four adaptive tools (`adaptive-reasoning`, `adaptive-code`, `adaptive-anti-deception`, `adaptive-memory`) additionally run an adapter LLM that rewrites the matched operation with task-specific identifiers; they require the Go or Super tier.
 
-The natural-language layer tells the model *what* to do. The topology layer pins down *how* those steps connect: where to decide, where to loop, where to stop and look at itself. Together they act as a persistent attention anchor that survives long context windows and multi-turn execution chains, which is precisely where a model's own reasoning template typically decays.
-
-## Installation
+## Install
 
 ```bash
 npm install ejentum-langgraph
-# peer deps (you almost certainly have these)
+# peer deps
 npm install @langchain/core zod
 ```
 
 ## Configuration
 
-Get an Ejentum API key at <https://ejentum.com/pricing> (free and paid tiers) and set it in your environment:
-
 ```bash
-export EJENTUM_API_KEY="zpka_..."
+export EJENTUM_API_KEY="ej_..."
 ```
 
-Or pass it explicitly: `createEjentumTools({ apiKey: "..." })`.
+Or pass it explicitly: `createEjentumTools({ apiKey: "..." })`. Get a key at [ejentum.com/pricing](https://ejentum.com/pricing).
 
 ## Usage
 
@@ -38,24 +33,15 @@ import { createEjentumTools } from "ejentum-langgraph";
 
 const agent = createReactAgent({
   llm: new ChatAnthropic({ model: "claude-sonnet-4-6" }),
-  tools: createEjentumTools(), // reads EJENTUM_API_KEY from env
+  tools: createEjentumTools(),
 });
 
 const result = await agent.invoke({
-  messages: [
-    {
-      role: "user",
-      content:
-        "We've spent three months on the GraphQL gateway. " +
-        "Should we keep going or pivot to REST?",
-    },
-  ],
+  messages: [{ role: "user", content: "Should we keep the GraphQL gateway or pivot to REST?" }],
 });
-
-console.log(result.messages.at(-1)?.content);
 ```
 
-### With `createAgent` (LangChain v1.x main package)
+### With `createAgent` (LangChain v1.x)
 
 ```ts
 import { createAgent } from "langchain";
@@ -68,93 +54,70 @@ const agent = createAgent({
 });
 ```
 
-### Inside a graph node (LangGraph state machines)
+### Inside a graph node
 
 ```ts
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { createEjentumTools } from "ejentum-langgraph";
 
 const toolNode = new ToolNode(createEjentumTools());
-// ...attach to your StateGraph
 ```
 
-### Pick a subset of harnesses
+### Pick a subset
 
 ```ts
 import { createReasoningTool, createAntiDeceptionTool } from "ejentum-langgraph";
 
-const tools = [
-  createReasoningTool(),
-  createAntiDeceptionTool(),
-  // ...your other non-Ejentum tools
-];
+const tools = [createReasoningTool(), createAntiDeceptionTool()];
 ```
 
-### Explicit API key
+## Tool inventory
 
-```ts
-const tools = createEjentumTools({ apiKey: "zpka_..." });
-```
+The LLM-facing tool name is the `name` field on each tool (set by the factory; canonical hyphenated strings).
 
-## The four tools
+| Factory | Tool `name` (LLM-visible) | Mode string | Library size |
+|---|---|---|---:|
+| `createReasoningTool` | `reasoning` | `reasoning` | 311 |
+| `createCodeTool` | `code` | `code` | 128 |
+| `createAntiDeceptionTool` | `anti-deception` | `anti-deception` | 139 |
+| `createMemoryTool` | `memory` | `memory` | 101 |
+| `createAdaptiveReasoningTool` | `adaptive-reasoning` | `adaptive-reasoning` | (same pool) |
+| `createAdaptiveCodeTool` | `adaptive-code` | `adaptive-code` | (same pool) |
+| `createAdaptiveAntiDeceptionTool` | `adaptive-anti-deception` | `adaptive-anti-deception` | (same pool) |
+| `createAdaptiveMemoryTool` | `adaptive-memory` | `adaptive-memory` | (same pool) |
 
-| Tool name (LLM-visible) | Best for | Library size |
-|---|---|---|
-| `harness_reasoning` | Analytical, diagnostic, planning, multi-step tasks | 311 operations |
-| `harness_code` | Code generation, refactoring, review, debugging | 128 operations |
-| `harness_anti_deception` | Prompts that pressure the agent to validate, certify, or soften an honest assessment | 139 operations |
-| `harness_memory` | Sharpening an observation about cross-turn drift. Filter-oriented, not write-oriented. Format `query` as `"I noticed X. This might mean Y. Sharpen: Z."` | 101 operations |
-
-Each tool returns a string. The bracketed labels in the returned scaffold (`[NEGATIVE GATE]`, `[PROCEDURE]`, `[REASONING TOPOLOGY]`, etc.) are instructions to the agent, not content to display.
-
-## What an injection looks like
-
-A real `reasoning` mode response on the query `investigate why our nightly ETL job has started failing intermittently over the past two weeks; nothing in the code or schema has changed`:
-
-```
-[NEGATIVE GATE]
-The server's response time was accepted as average, despite a suspicious
-rhythm break in its timing pattern.
-
-[PROCEDURE]
-Step 1: Establish baseline timing profiles by extracting historical
-durations and intervals for each event type. Step 2: Compare each observed
-timing against its baseline and compute deviation magnitude. ...
-
-[REASONING TOPOLOGY]
-S1:durations -> FIXED_POINT[baselines] -> N{dismiss_timing_deviations_
-without_investigation} -> for_each: S2:compare -> S3:deviation ->
-G1{>2sigma?} --yes-> S4:classify -> S5:probe_cause -> FLAG -> continue --no->
-S6:validate -> continue -> all_checked -> OUT:anomaly_report
-
-[FALSIFICATION TEST]
-If no event timing is flagged as suspiciously fast or slow relative to
-baseline, temporal anomaly detection was not active.
-
-Amplify: timing baseline comparison; anomaly classification; security
-context elevation
-Suppress: average timing acceptance; outlier normalization
-```
+Each tool takes one parameter, `query: string`, and returns the injection as plain text. Errors return as human-readable strings rather than thrown exceptions.
 
 ## API reference
 
 ```ts
-import { createEjentumTools, type EjentumConfig } from "ejentum-langgraph";
+import { createEjentumTools, type EjentumConfig, type HarnessMode } from "ejentum-langgraph";
 
 createEjentumTools(config?: EjentumConfig): DynamicStructuredTool[]
 ```
 
-| Config field | Default | Description |
+| `EjentumConfig` field | Default | Description |
 |---|---|---|
-| `apiKey` | `process.env.EJENTUM_API_KEY` | Ejentum Logic API key. |
-| `apiUrl` | `https://ejentum-main-ab125c3.zuplo.app/logicv1/` | Override only if you self-host the gateway. |
-| `timeoutMs` | `10000` | Per-call HTTP timeout in milliseconds. |
+| `apiKey` | `process.env.EJENTUM_API_KEY` | API key. |
+| `apiUrl` | `https://api.ejentum.com/harness/` | Override for self-hosted gateway. |
+| `timeoutMs` | `10000` | Per-call HTTP timeout. |
 
-Per-tool factories: `createReasoningTool`, `createCodeTool`, `createAntiDeceptionTool`, `createMemoryTool`.
+## Wire contract
+
+`createEjentumTools()` issues:
+
+```
+POST https://api.ejentum.com/harness/
+Headers: Authorization: Bearer <key>, Content-Type: application/json
+Body:    { "query": <string>, "mode": <one of 8 mode strings> }
+Response (200): [ { "<mode>": "<injection string>" } ]
+```
+
+Full wire contract, field structure, DAG syntax, and a canonical dynamic-vs-adaptive comparison on the same query are documented in the [ejentum-mcp README](https://github.com/ejentum/ejentum-mcp#wire-contract). The format is identical across this package and every Ejentum shim.
 
 ## ejentum-mcp alternative
 
-LangGraph supports MCP via the LangChain MCP adapters:
+LangGraph supports MCP via `@langchain/mcp-adapters`:
 
 ```ts
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
@@ -171,25 +134,13 @@ const client = new MultiServerMCPClient({
 const tools = await client.getTools();
 ```
 
-This `ejentum-langgraph` package is the direct-REST path; MCP is the universal protocol path.
-
 ## Compatibility
 
 - Node.js 18+
 - `@langchain/core` 0.3+ (peer dep `>=0.3.0`)
 - Works with `@langchain/langgraph` 0.x and 1.x, and `langchain` 1.x
-- Zod 3.x (peer dep `^3.23.0`)
+- `zod` 3.x (peer dep `^3.23.0`)
 - TypeScript 5.x
-
-## Resources
-
-- Ejentum homepage: <https://ejentum.com>
-- Pricing: <https://ejentum.com/pricing>
-- API reference: <https://ejentum.com/docs/api_reference>
-- "Why LLM Agents Fail" essay: <https://ejentum.com/blog/why-llm-agents-fail>
-- "Under Pressure" research paper: <https://doi.org/10.5281/zenodo.19392715>
-- LangGraph.js documentation: <https://langchain-ai.github.io/langgraphjs/>
-- LangChain.js documentation: <https://js.langchain.com>
 
 ## License
 
